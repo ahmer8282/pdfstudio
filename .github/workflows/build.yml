@@ -1,0 +1,65 @@
+name: Build Windows app
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install libraries
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build PDF Studio.exe
+        run: pyinstaller --noconfirm --log-level WARN PDFStudio.spec
+
+      - name: Self-test every export format
+        shell: pwsh
+        run: |
+          $out = "$env:RUNNER_TEMP\selftest"
+          $p = Start-Process -FilePath "dist\PDF Studio\PDF Studio.exe" `
+               -ArgumentList "--selftest", "`"$PWD\selftest.pdf`"", "`"$out`"" -Wait -PassThru
+          Get-Content "$out\selftest_report.txt"
+          if ($p.ExitCode -ne 0) { throw "Self-test failed" }
+
+      - name: Build installer (Setup.exe)
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress | Out-Null
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" /DAppVersion=1.0.${{ github.run_number }} installer.iss
+
+      - name: Portable zip
+        shell: pwsh
+        run: Compress-Archive -Path "dist\PDF Studio" -DestinationPath "PDF-Studio-Portable.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PDF-Studio
+          path: |
+            Output/PDF-Studio-Setup.exe
+            PDF-Studio-Portable.zip
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: PDF Studio 1.0.${{ github.run_number }}
+          body: |
+            **Download `PDF-Studio-Setup.exe`** and double-click it to install.
+            (Portable version: unzip `PDF-Studio-Portable.zip` and run `PDF Studio.exe`.)
+          files: |
+            Output/PDF-Studio-Setup.exe
+            PDF-Studio-Portable.zip
